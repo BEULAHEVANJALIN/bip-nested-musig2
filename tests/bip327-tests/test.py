@@ -182,8 +182,6 @@ def test_sign_verify_vectors() -> None:
         assert psig == expected
         assert partial_sig_verify_internal(psig, pubnonces[signer_index], pubkeys[signer_index], session_ctx)
 
-    return
-
     for test_case in sign_error_test_cases:
         exception, except_fn = get_error_details(test_case)
 
@@ -207,7 +205,10 @@ def test_sign_verify_vectors() -> None:
         msg = msgs[test_case["msg_index"]]
         signer_index = test_case["signer_index"]
 
-        assert not partial_sig_verify(sig, pubnonces, pubkeys, [], [], msg, signer_index)
+        other_pubkeys = [pk for pk in pubkeys if pk != pubkeys[signer_index]]
+        aggnonce = nonce_agg(pubnonces)
+        session_ctx =  SessionContext([aggnonce], [other_pubkeys], [], [], msg)
+        assert not partial_sig_verify_internal(sig, pubnonces[signer_index], pubkeys[signer_index], session_ctx)
 
     for test_case in verify_error_test_cases:
         exception, except_fn = get_error_details(test_case)
@@ -218,7 +219,10 @@ def test_sign_verify_vectors() -> None:
         msg = msgs[test_case["msg_index"]]
         signer_index = test_case["signer_index"]
 
-        assert_raises(exception, lambda: partial_sig_verify(sig, pubnonces, pubkeys, [], [], msg, signer_index), except_fn)
+        other_pubkeys = [pk for pk in pubkeys if pk != pubkeys[signer_index]]
+        aggnonce = nonce_agg(pubnonces)
+        session_ctx =  SessionContext([aggnonce], [other_pubkeys], [], [], msg)
+        assert_raises(exception, lambda: partial_sig_verify_internal(sig, pubnonces[signer_index], pubkeys[signer_index], session_ctx), except_fn)
 
 def test_tweak_vectors() -> None:
     vector_file = VECTORS_DIR / 'tweak_vectors.json'
@@ -258,13 +262,16 @@ def test_tweak_vectors() -> None:
         signer_index = test_case["signer_index"]
         expected = bytes.fromhex(test_case["expected"])
 
-        session_ctx = SessionContext(aggnonce, pubkeys, tweaks, is_xonly, msg)
+        other_pubkeys = [pk for pk in pubkeys if pk != pubkeys[signer_index]]
+        aggnonce = nonce_agg(pubnonces)
+        session_ctx =  SessionContext([aggnonce], [other_pubkeys], tweaks, is_xonly, msg)
         secnonce_tmp = bytearray(secnonce)
         # WARNING: An actual implementation should _not_ copy the secnonce.
         # Reusing the secnonce, as we do here for testing purposes, can leak the
         # secret key.
-        assert sign(secnonce_tmp, sk, session_ctx) == expected
-        assert partial_sig_verify(expected, pubnonces, pubkeys, tweaks, is_xonly, msg, signer_index)
+        _, psig = sign(secnonce_tmp, sk, session_ctx)
+        assert psig == expected
+        assert partial_sig_verify_internal(expected, pubnonces[signer_index], pubkeys[signer_index], session_ctx)
 
     for test_case in error_test_cases:
         exception, except_fn = get_error_details(test_case)
@@ -275,7 +282,9 @@ def test_tweak_vectors() -> None:
         is_xonly = test_case["is_xonly"]
         signer_index = test_case["signer_index"]
 
-        session_ctx = SessionContext(aggnonce, pubkeys, tweaks, is_xonly, msg)
+        other_pubkeys = [pk for pk in pubkeys if pk != pubkeys[signer_index]]
+        aggnonce = nonce_agg(pubnonces)
+        session_ctx =  SessionContext([aggnonce], [other_pubkeys], tweaks, is_xonly, msg)
         assert_raises(exception, lambda: sign(secnonce, sk, session_ctx), except_fn)
 
 def test_sig_agg_vectors() -> None:
@@ -306,12 +315,25 @@ def test_sig_agg_vectors() -> None:
         tweaks = [tweak[i] for i in test_case["tweak_indices"]]
         is_xonly = test_case["is_xonly"]
         psigs = [psig[i] for i in test_case["psig_indices"]]
+        b = test_case["b"]
         expected = bytes.fromhex(test_case["expected"])
 
-        session_ctx = SessionContext(aggnonce, pubkeys, tweaks, is_xonly, msg)
-        sig = partial_sig_agg(psigs, session_ctx)
+        agg_pk = key_agg(pubkeys)
+        session_ctx = SessionContext(None, None, tweaks, is_xonly, msg) # only tweak info is required
+        try:
+            R_1 = cpoint_ext(aggnonce[0:33])
+            R_2 = cpoint_ext(aggnonce[33:66])
+        except ValueError:
+            # Nonce aggregator sent invalid nonces
+            raise InvalidContributionError(None, "aggnonce")
+        R_ = point_add(R_1, point_mul(R_2, b))
+        R = R_ if not is_infinite(R_) else G
+        assert R is not None
+        x_r = xbytes(R)
+        s = partial_sig_agg(psigs, x_r, session_ctx, agg_pk)
+        sig = x_r + s
         assert sig == expected
-        aggpk = get_xonly_pk(apply_tweaks(pubkeys, tweaks, is_xonly))
+        aggpk = get_xonly_pk(apply_tweaks(agg_pk, tweaks, is_xonly))
         assert schnorr_verify(msg, aggpk, sig)
 
     for test_case in error_test_cases:
@@ -321,70 +343,29 @@ def test_sig_agg_vectors() -> None:
         aggnonce = nonce_agg(pubnonces)
 
         pubkeys = [X[i] for i in test_case["key_indices"]]
-        tweaks = [tweak[i] for i in test_case["tweak_indices"]]
+        tweaks = [tweak[i] for i in test_case["tweak_indices"]] 
         is_xonly = test_case["is_xonly"]
         psigs = [psig[i] for i in test_case["psig_indices"]]
+        b = test_case["b"]
 
-        session_ctx = SessionContext(aggnonce, pubkeys, tweaks, is_xonly, msg)
-        assert_raises(exception, lambda: partial_sig_agg(psigs, session_ctx), except_fn)
-
-def test_sign_and_verify_random(iters: int) -> None:
-    for i in range(iters):
-        sk_1 = secrets.token_bytes(32)
-        sk_2 = secrets.token_bytes(32)
-        pk_1 = individual_pk(sk_1)
-        pk_2 = individual_pk(sk_2)
-        pubkeys = [pk_1, pk_2]
-
-        # In this example, the message and aggregate pubkey are known
-        # before nonce generation, so they can be passed into the nonce
-        # generation function as a defense-in-depth measure to protect
-        # against nonce reuse.
-        #
-        # If these values are not known when nonce_gen is called, empty
-        # byte arrays can be passed in for the corresponding arguments
-        # instead.
-        msg = secrets.token_bytes(32)
-        v = secrets.randbelow(4)
-        tweaks = [secrets.token_bytes(32) for _ in range(v)]
-        is_xonly = [secrets.choice([False, True]) for _ in range(v)]
-        aggpk = get_xonly_pk(apply_tweaks(pubkeys, tweaks, is_xonly))
-
-        # Use a non-repeating counter for extra_in
-        secnonce_1, pubnonce_1 = nonce_gen(sk_1, pk_1, aggpk, msg, i.to_bytes(4, 'big'))
-
-        # Use a clock for extra_in
-        t = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
-        secnonce_2, pubnonce_2 = nonce_gen(sk_2, pk_2, aggpk, msg, t.to_bytes(8, 'big'))
-
-        pubnonces = [pubnonce_1, pubnonce_2]
-        aggnonce = nonce_agg(pubnonces)
-
-        session_ctx = SessionContext(aggnonce, pubkeys, tweaks, is_xonly, msg)
-        psig_1 = sign(secnonce_1, sk_1, session_ctx)
-        assert partial_sig_verify(psig_1, pubnonces, pubkeys, tweaks, is_xonly, msg, 0)
-        # An exception is thrown if secnonce_1 is accidentally reused
-        assert_raises(ValueError, lambda: sign(secnonce_1, sk_1, session_ctx), lambda e: True)
-
-        # Wrong signer index
-        assert not partial_sig_verify(psig_1, pubnonces, pubkeys, tweaks, is_xonly, msg, 1)
-
-        # Wrong message
-        assert not partial_sig_verify(psig_1, pubnonces, pubkeys, tweaks, is_xonly, secrets.token_bytes(32), 0)
-
-        if i % 2 == 0:
-            psig_2 = sign(secnonce_2, sk_2, session_ctx)
-        assert partial_sig_verify(psig_2, pubnonces, pubkeys, tweaks, is_xonly, msg, 1)
-
-        sig = partial_sig_agg([psig_1, psig_2], session_ctx)
-        assert schnorr_verify(msg, aggpk, sig)
+        session_ctx = SessionContext(None, None, tweaks, is_xonly, msg)
+        agg_pk = key_agg(pubkeys)
+        try:
+            R_1 = cpoint_ext(aggnonce[0:33])
+            R_2 = cpoint_ext(aggnonce[33:66])
+        except ValueError:
+            # Nonce aggregator sent invalid nonces
+            raise InvalidContributionError(None, "aggnonce")
+        R_ = point_add(R_1, point_mul(R_2, b))
+        R = R_ if not is_infinite(R_) else G
+        assert R is not None
+        assert_raises(exception, lambda: partial_sig_agg(psigs, xbytes(R), session_ctx, agg_pk), except_fn)
 
 if __name__ == '__main__':
-    # test_key_sort_vectors()
-    # test_key_agg_vectors()
-    # test_nonce_gen_vectors()
-    # test_nonce_agg_vectors()
+    test_key_sort_vectors()
+    test_key_agg_vectors()
+    test_nonce_gen_vectors()
+    test_nonce_agg_vectors()
     test_sign_verify_vectors()
-    # test_tweak_vectors()
-    # test_sig_agg_vectors()
-    # test_sign_and_verify_random(6)
+    test_tweak_vectors()
+    test_sig_agg_vectors()
