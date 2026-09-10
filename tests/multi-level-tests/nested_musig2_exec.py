@@ -31,7 +31,8 @@ def round1(node: Node, aggpk: XonlyPk = None, msg: bytes = None, extra_in = None
         for w in node.children:
             round1(w, aggpk, msg, extra_in)
         node.out_internal = nonce_agg([w.out for w in node.children])
-        node.out = nonce_agg_ext(node.out_internal, node.keyagg_ctx.Q)
+        if not node.is_root:
+            node.out = nonce_agg_ext(node.out_internal, node.keyagg_ctx.Q)
 
 def round2(node: Node, session_ctx: SessionContext, rand:bytes = None):
     if node.is_leaf():
@@ -40,8 +41,8 @@ def round2(node: Node, session_ctx: SessionContext, rand:bytes = None):
         node.state_ = final_nonce
     else:
         nonce_path, pk_tree, tweaks, is_xonly, msg = session_ctx
-        for w in node.children:
-            siblings = [u.pk for u in node.children if u.pk != w.pk]
+        for child_index, w in enumerate(node.children):
+            siblings = [u.pk for sibling_index, u in enumerate(node.children) if sibling_index != child_index]
             session_ctx_ = SessionContext(nonce_path + [node.out_internal], pk_tree + [siblings], tweaks, is_xonly, msg)
             round2(w, session_ctx_, rand)
 
@@ -78,10 +79,7 @@ def simulate_sign_test(node):
     R = node.state_
     assert(verify_r(node, R))
     tweaked_pubkey_ctx = apply_tweaks(node.keyagg_ctx, tweaks, is_xonly)
-    try:
-        assert(schnorr_verify(msg, get_xonly_pk(tweaked_pubkey_ctx), R + node.out_))
-    except AssertionError:
-        print_tree(node)
+    assert(schnorr_verify(msg, get_xonly_pk(tweaked_pubkey_ctx), R + node.out_))
 
 def verify_r(node: Node, R: bytes):
     if node.is_leaf():

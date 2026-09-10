@@ -14,14 +14,14 @@ class Node:
     value: str
     is_root: bool = False
     children: list["Node"] = field(default_factory=list)
-    sk: bytes = None
-    pk: PlainPk = None
-    keyagg_ctx: KeyAggContext = None
+    sk: bytes = None # leaf secret key
+    pk: PlainPk = None # leaf pub key
+    keyagg_ctx: KeyAggContext = None # aggregate key incase the node is an aggregator
     out: bytes = None # leaf pubnonce or aggnonce_ext
-    state: bytearray = None # leaf pubnonce
+    state: bytearray = None # leaf secnonce
     out_internal: bytes = None # aggnonce
-    out_: bytes = None
-    state_: bytes = None
+    out_: bytes = None # partial signature
+    state_: bytes = None # final nonce R
 
     def is_leaf(self) -> bool:
         return len(self.children) == 0
