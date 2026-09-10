@@ -1,4 +1,4 @@
-from tree import Node
+from tree import Node, print_tree
 import secrets
 
 from pathlib import Path
@@ -55,7 +55,35 @@ def round2(node: Node, session_ctx: SessionContext, rand:bytes = None):
             s = partial_sig_agg(psigs, node.state_)
         node.out_ = s
 
-def verify_r(R: bytes, node: Node):
+
+def simulate_sign_test(node):
+    msg = secrets.token_bytes(32)
+    # Setup
+    key_gen_tree(node)
+
+    aggx = get_xonly_pk(node.keyagg_ctx)
+    round1(node, aggx, msg)
+
+    tweaks = [secrets.token_bytes(32) for _ in range(4)]
+    is_xonly = [secrets.choice([False, True]) for _ in range(4)]
+    session_ctx = SessionContext(
+        nonce_path=[],
+        pk_tree=[],
+        tweaks = tweaks,
+        is_xonly = is_xonly,
+        msg=msg,
+    )
+    round2(node, session_ctx)
+
+    R = node.state_
+    assert(verify_r(node, R))
+    tweaked_pubkey_ctx = apply_tweaks(node.keyagg_ctx, tweaks, is_xonly)
+    try:
+        assert(schnorr_verify(msg, get_xonly_pk(tweaked_pubkey_ctx), R + node.out_))
+    except AssertionError:
+        print_tree(node)
+
+def verify_r(node: Node, R: bytes):
     if node.is_leaf():
         if R != node.state_:
             print(node.value + " failed to verify R")
@@ -65,6 +93,6 @@ def verify_r(R: bytes, node: Node):
             return True
     else:
         for w in node.children:
-            if not verify_r(R, w):
+            if not verify_r(w, R):
                 return False
         return True

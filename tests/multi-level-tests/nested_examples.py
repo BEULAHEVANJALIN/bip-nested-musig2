@@ -1,74 +1,8 @@
 from tree import *
-import secrets
-from nested_musig2_exec import *
+from nested_musig2_exec import simulate_sign_test
 
-import sys
-from pathlib import Path
-TEST_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = TEST_DIR.parent.parent
+tree1 = parse_forest("0(17(21(11(0(13(18)))),22(9(8(7,14(6(19)),12(1(4(2(3(15,16(5(10,20))))))))))))")
+simulate_sign_test(tree1)
 
-sys.path.insert(0, str(PROJECT_ROOT))
-from reference import *
-
-def balanced_4leaf_bintree():
-    root = parse_forest("A(D,E),B(F,G)", root_name="Abby")
-    print("example without tweak")
-    msg = secrets.token_bytes(32)
-
-    # Setup
-    key_gen_tree(root)
-    print_tree(root)
-
-    aggx = get_xonly_pk(root.keyagg_ctx)
-    print("Round 1 starts")
-    round1(root, aggx, msg)
-
-    print("Round 2 starts")
-    session_ctx = SessionContext([], [], [], [], msg)
-    round2(root, session_ctx)
-
-    R = root.state_
-    if verify_r(R, root):
-        print("R computed success")
-    else:
-        print("R computation failed")
-
-    assert(schnorr_verify(msg, get_xonly_pk(root.keyagg_ctx), root.state_ + root.out_))
-
-def balanced_4leaf_bintree_tweak_example():
-    root = parse_forest("A(D,E),B(F,G)", root_name="Abby")
-    print("example with tweak")
-    msg = secrets.token_bytes(32)
-
-    # Setup
-    key_gen_tree(root)
-    print_tree(root)
-
-    aggx = get_xonly_pk(root.keyagg_ctx)
-    print("Round 1 starts")
-    round1(root, aggx, msg)
-
-    print("Round 2 starts")
-    tweaks = [secrets.token_bytes(32) for _ in range(4)]
-    is_xonly = [secrets.choice([False, True]) for _ in range(4)]
-    session_ctx = SessionContext(
-        nonce_path=[],
-        pk_tree=[],
-        tweaks = tweaks,
-        is_xonly = is_xonly,
-        msg=msg,
-    )
-    round2(root, session_ctx)
-
-    R = root.state_
-    if verify_r(R, root):
-        print("R computed success")
-    else:
-        print("R computation failed")
-
-    tweaked_pubkey_ctx = apply_tweaks(root.keyagg_ctx, tweaks, is_xonly)
-    assert(schnorr_verify(msg, get_xonly_pk(tweaked_pubkey_ctx), root.state_ + root.out_))
-
-
-balanced_4leaf_bintree()
-balanced_4leaf_bintree_tweak_example()
+tree2 = parse_forest("4(5,0(6),2(7(3,8(1),9)))")
+simulate_sign_test(tree2)

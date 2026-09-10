@@ -7,7 +7,6 @@
 from typing import List, Optional, Tuple, NewType, NamedTuple
 import hashlib
 import secrets
-import time
 
 #
 # The following helper functions were copied from the BIP-340 and BIP-327 reference implementations:

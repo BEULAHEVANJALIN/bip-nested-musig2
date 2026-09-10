@@ -17,15 +17,14 @@ class Node:
     sk: bytes = None
     pk: PlainPk = None
     keyagg_ctx: KeyAggContext = None
-    out: bytes = None
-    state: bytearray = None
-    out_internal: bytes = None
+    out: bytes = None # leaf pubnonce or aggnonce_ext
+    state: bytearray = None # leaf pubnonce
+    out_internal: bytes = None # aggnonce
     out_: bytes = None
     state_: bytes = None
 
     def is_leaf(self) -> bool:
         return len(self.children) == 0
-
 
 def parse_forest(dsl: str, root_name: str = "ROOT") -> Node:
     """
@@ -84,8 +83,8 @@ def parse_forest(dsl: str, root_name: str = "ROOT") -> Node:
 
 def print_tree(node: Node, prefix: str = "", is_last: bool = True) -> None:
     connector = "└── " if is_last else "├── "
-    print(prefix + connector + node.pk.hex().upper())
-    # print(prefix + connector + node.value)
+    # print(prefix + connector + node.pk.hex().upper())
+    print(prefix + connector + node.value)
 
     child_prefix = prefix + ("    " if is_last else "│   ")
 

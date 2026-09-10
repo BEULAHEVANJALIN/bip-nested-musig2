@@ -2,6 +2,7 @@ from tree import *
 import secrets
 from nested_musig2_exec import *
 import random
+import heapq
 
 import sys
 from pathlib import Path
@@ -11,45 +12,70 @@ PROJECT_ROOT = TEST_DIR.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 from reference import *
 
-def gen_tree(num_leaves: int) -> Node:
-    if num_leaves <= 0:
-        raise ValueError("num_leaves must be positive")
+MIN_NODES = 6
+MAX_NODES = 30
 
-    nodes = [Node(str(i)) for i in range(num_leaves)]
+def gen_tree(num_nodes: int) -> Node:
+    if num_nodes <= 0:
+        raise ValueError("num_nodes must be positive")
 
-    while len(nodes) > 1:
-        num_children = random.randint(1, len(nodes))
+    if num_nodes == 1:
+        return Node()
 
-        children = random.sample(nodes, num_children)
+    # A labeled tree with n vertices corresponds to a Prüfer
+    # sequence of length n - 2.
+    prufer = [
+        random.randrange(num_nodes)
+        for _ in range(num_nodes - 2)
+    ]
 
-        agg_name = ''
-        for child in children:
-            agg_name += child.value + '.'
-            nodes.remove(child)
+    root = random.choice(prufer) # select a node of degree greater than 1 as root
 
-        aggregator = Node(agg_name)
-        aggregator.children = children
-        nodes.append(aggregator)
+    # Initially every vertex has degree 1.
+    degree = [1] * num_nodes
 
-    nodes[0].is_root = True
-    return nodes[0]
+    for v in prufer:
+        degree[v] += 1
 
-for i in range(10):
-    num_leaves = random.randint(6,28)
-    root = gen_tree(num_leaves)
-    msg = secrets.token_bytes(32)
+    # Vertices of degree 1.
+    leaves = [
+        v for v in range(num_nodes)
+        if degree[v] == 1
+    ]
+    heapq.heapify(leaves)
 
-    key_gen_tree(root)
-    aggx = get_xonly_pk(root.keyagg_ctx)
+    # Undirected adjacency list.
+    adj = [[] for _ in range(num_nodes)]
 
-    round1(root, aggx, msg)
-    v = secrets.randbelow(4)
-    tweaks = [secrets.token_bytes(32) for _ in range(v)]
-    is_xonly = [secrets.choice([False, True]) for _ in range(v)]
-    session_ctx = SessionContext([], [], tweaks, is_xonly, msg)
-    round2(root, session_ctx)
+    # Decode the Prüfer sequence.
+    for v in prufer:
+        leaf = heapq.heappop(leaves)
 
-    R = root.state_
-    assert(verify_r(R, root))
+        adj[leaf].append(v)
+        adj[v].append(leaf)
 
-    assert(schnorr_verify(msg, get_xonly_pk(root.keyagg_ctx), root.state_ + root.out_))
+        degree[leaf] -= 1
+        degree[v] -= 1
+
+        if degree[v] == 1:
+            heapq.heappush(leaves, v)
+
+    # Two vertices remain.
+    u = heapq.heappop(leaves)
+    v = heapq.heappop(leaves)
+
+    adj[u].append(v)
+    adj[v].append(u)
+
+    def build_tree(node: Node, parent: Node = None) -> Node:
+        node.children = [build_tree(Node(str(child)), node) for child in adj[int(node.value)] if parent == None or str(child) != parent.value]
+        return node
+
+    root = Node(str(root))
+    root.is_root = True
+    return build_tree(root)
+
+for epoch in range(5):
+    num_nodes = random.randint(MIN_NODES, MAX_NODES)
+    root = gen_tree(num_nodes)
+    simulate_sign_test(root)
