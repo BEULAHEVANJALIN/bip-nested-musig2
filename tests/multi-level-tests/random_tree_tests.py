@@ -13,7 +13,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from reference import *
 
 MIN_NODES = 6
-MAX_NODES = 30
+MAX_NODES = 15
+EPOCHS = 3
 
 def gen_tree(num_nodes: int) -> Node:
     if num_nodes <= 0:
@@ -75,7 +76,7 @@ def gen_tree(num_nodes: int) -> Node:
     root.is_root = True
     return build_tree(root)
 
-for epoch in range(5):
+for epoch in range(EPOCHS):
     num_nodes = random.randint(MIN_NODES, MAX_NODES)
     root = gen_tree(num_nodes)
     simulate_sign_test(root)

@@ -258,7 +258,7 @@ Internal Algorithm ''GetSessionValues(session_ctx, pk)'':
 * Let ''keyagg_ctx = KeyAgg(L<sub>Λ−1</sub>)''; fail if ''KeyAgg'' fails according to BIP327.
 * For ''d = Λ−2, ..., 0'':
 ** Let ''pk<sub>d</sub> = GetPlainPubkey(keyagg_ctx)''.
-** Let ''b<sub>d+1</sub> = int(hash<sub>NestedMuSig/aggnoncecoef</sub>(nonce_path[d+1] || xbytes(pk<sub>d</sub>) || ε)) mod n'', where ''ε'' is the empty byte array.
+** Let ''b<sub>d+1</sub> = int(hash<sub>NestedMuSig/aggnoncecoef</sub>(nonce_path[d+1] || xbytes(pk<sub>d</sub>))) mod n''.
 ** ''Fail'' if ''R'<sub>1,d+1</sub>'' is the point at infinity.
 ** Let ''R<sub>2,ext</sub> = b<sub>d+1</sub>⋅R'<sub>2,d+1</sub>''.
 ** ''Fail'' if ''R<sub>2,ext</sub>'' is the point at infinity.

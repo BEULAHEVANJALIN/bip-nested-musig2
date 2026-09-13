@@ -97,7 +97,6 @@ def schnorr_verify(msg: bytes, pubkey: bytes, sig: bytes) -> bool:
     e = int_from_bytes(tagged_hash("BIP0340/challenge", sig[0:32] + pubkey + msg)) % n
     R = point_add(point_mul(G, s), point_mul(P, n - e))
     if (R is None) or (not has_even_y(R)) or (x(R) != r):
-        print("R verification failed")
         return False
     return True
 
@@ -305,6 +304,8 @@ def nonce_agg(pubnonces: List[bytes]) -> bytes:
         R_j = infinity
         for i in range(u):
             try:
+                if len(pubnonces[i]) != 66:
+                    raise ValueError('The public nonce must be a 66-byte array.')
                 R_ij = cpoint(pubnonces[i][(j-1)*33:j*33])
             except ValueError:
                 raise InvalidContributionError(i, "pubnonce")
@@ -318,6 +319,8 @@ def nonce_agg(pubnonces: List[bytes]) -> bytes:
 
 def nonce_agg_ext(nonce_internal: bytes, pk_internal: Point) -> bytes:
     try:
+        if len(nonce_internal) != 66:
+            raise ValueError('The aggregate nonce must be a 66-byte array.')
         R_1_ = cpoint_ext(nonce_internal[0:33])
         R_2_ = cpoint_ext(nonce_internal[33:66])
     except ValueError:
@@ -326,7 +329,10 @@ def nonce_agg_ext(nonce_internal: bytes, pk_internal: Point) -> bytes:
     b = agg_nonce_coeff_hash(nonce_internal, pk_internal)
     R_1 = R_1_
     R_2 = point_mul(R_2_, b)
-    return cbytes_ext(R_1) + cbytes_ext(R_2) 
+    if is_infinite(R_1) or is_infinite(R_2):
+        raise InvalidContributionError(None, "aggnonce")
+    assert R_1 is not None and R_2 is not None
+    return cbytes(R_1) + cbytes(R_2)
 
 # All information in SessionContext are public
 SessionContext = NamedTuple('SessionContext', [('nonce_path', List[bytes]),
@@ -352,6 +358,17 @@ def print_tree_path(pk_level: List[PlainPk]):
 def get_session_values(session_ctx: SessionContext, pk: PlainPk) -> Tuple[Point, int, int, int, Point, int]:
     (nonce_path, pk_tree, tweaks, is_xonly, msg) = session_ctx
     depth = len(pk_tree)
+    if depth == 0 or len(nonce_path) != depth:
+        raise ValueError('Nonce and key paths must have the same nonzero length.')
+    nonce_points = []
+    for d, aggnonce in enumerate(nonce_path):
+        try:
+            if len(aggnonce) != 66:
+                raise ValueError('The aggregate nonce must be a 66-byte array.')
+            nonce_points.append((cpoint_ext(aggnonce[:33]), cpoint_ext(aggnonce[33:])))
+        except ValueError:
+            # For aggregate nonce errors, signer identifies the aggregator level.
+            raise InvalidContributionError(d, "aggnonce")
     pk_d_1 = pk # pk suffix d - 1
     L_d_1 = key_sort([pk_d_1] + pk_tree[depth - 1]) # L suffix d - 1
     a_d_1 = key_agg_coeff(L_d_1, pk_d_1) # a suffix d - 1
@@ -359,7 +376,11 @@ def get_session_values(session_ctx: SessionContext, pk: PlainPk) -> Tuple[Point,
     b_path = []
     a_path = [a_d_1]
     for d in range(depth-2, -1, -1):
-        b_path.append(agg_nonce_coeff_hash(nonce_path[d + 1], pk_parent))
+        b_d = agg_nonce_coeff_hash(nonce_path[d + 1], pk_parent)
+        R_1, R_2 = nonce_points[d + 1]
+        if is_infinite(R_1) or is_infinite(point_mul(R_2, b_d)):
+            raise InvalidContributionError(d + 1, "aggnonce")
+        b_path.append(b_d)
         pk_parent_bytes = PlainPk(cbytes(pk_parent))
         L_d_1 = key_sort([pk_parent_bytes] + pk_tree[d])
         a_path.append(key_agg_coeff(L_d_1, pk_parent_bytes))
@@ -372,12 +393,7 @@ def get_session_values(session_ctx: SessionContext, pk: PlainPk) -> Tuple[Point,
     aggnonce = nonce_path[0]
     Q, gacc, tacc = apply_tweaks(root_agg_key_ctx, tweaks, is_xonly)
     b = int_from_bytes(tagged_hash('MuSig/noncecoef', aggnonce + xbytes(Q) + msg)) % n
-    try:
-        R_1 = cpoint_ext(aggnonce[0:33])
-        R_2 = cpoint_ext(aggnonce[33:66])
-    except ValueError:
-        # Nonce aggregator sent invalid nonces
-        raise InvalidContributionError(None, "aggnonce")
+    R_1, R_2 = nonce_points[0]
     R_ = point_add(R_1, point_mul(R_2, b))
     R = R_ if not is_infinite(R_) else G
     assert R is not None
@@ -420,19 +436,10 @@ def sign(secnonce: bytearray, sk: bytes, session_ctx: SessionContext) -> Tuple[b
     assert R_s2 is not None
     pubnonce = cbytes(R_s1) + cbytes(R_s2)
     # Optional correctness check. The result of signing should pass signature verification.
-    assert partial_sig_verify_internal(psig, pubnonce, pk, session_ctx)
+    assert partial_sig_verify(psig, pubnonce, pk, session_ctx)
     return xbytes(R), psig
 
-def partial_sig_verify(psig: bytes, pubnonces: List[bytes], pubkeys: List[PlainPk], tweaks: List[bytes], is_xonly: List[bool], msg: bytes, i: int) -> bool:
-    if len(pubnonces) != len(pubkeys):
-        raise ValueError('The `pubnonces` and `pubkeys` arrays must have the same length.')
-    if len(tweaks) != len(is_xonly):
-        raise ValueError('The `tweaks` and `is_xonly` arrays must have the same length.')
-    aggnonce = nonce_agg(pubnonces)
-    session_ctx = SessionContext(aggnonce, pubkeys, tweaks, is_xonly, msg)
-    return partial_sig_verify_internal(psig, pubnonces[i], pubkeys[i], session_ctx)
-
-def partial_sig_verify_internal(psig: bytes, pubnonce: bytes, pk: bytes, session_ctx: SessionContext) -> bool:
+def partial_sig_verify(psig: bytes, pubnonce: bytes, pk: bytes, session_ctx: SessionContext) -> bool:
     (Q, gacc, _, b, R, e) = get_session_values(session_ctx, PlainPk(pk))
     s = int_from_bytes(psig)
     if s >= n:
@@ -451,6 +458,8 @@ def partial_sig_agg(psigs: List[bytes], x_R: bytes, session_ctx: SessionContext 
     s = 0
     u = len(psigs)
     for i in range(u):
+        if len(psigs[i]) != 32:
+            raise InvalidContributionError(i, "psig")
         s_i = int_from_bytes(psigs[i])
         if s_i >= n:
             raise InvalidContributionError(i, "psig")

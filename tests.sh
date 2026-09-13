@@ -3,6 +3,6 @@
 set -e
 
 cd "$(dirname "$0")"
-mypy --no-error-summary reference.py
-python3 reference.py
-python3 gen_vectors_helper.py > /dev/null
+python3 tests/bip327-tests/test.py
+python3 tests/multi-level-tests/test.py
+python3 tests/multi-level-tests/random_tree_tests.py

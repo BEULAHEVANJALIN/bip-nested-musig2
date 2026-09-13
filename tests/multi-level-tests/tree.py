@@ -26,6 +26,19 @@ class Node:
     def is_leaf(self) -> bool:
         return len(self.children) == 0
 
+    def walk(self, path: str = "root"):
+        """Yield (occurrence path, node) in preorder, including this node.
+
+        Sibling labels must be unique; repeated keys can use labels A1, A2, etc.
+        """
+        yield path, self
+        labels = [child.value for child in self.children]
+        if len(set(labels)) != len(labels) or any('/' in label for label in labels):
+            raise ValueError('Tree paths require unique sibling labels without slashes')
+        for child in self.children:
+            yield from child.walk(f"{path}/{child.value}")
+
+
 def parse_forest(dsl: str, root_name: str = "ROOT") -> Node:
     """
     Examples:

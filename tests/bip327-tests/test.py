@@ -180,10 +180,13 @@ def test_sign_verify_vectors() -> None:
         secnonce_tmp = bytearray(secnonces[0])
         _, psig = sign(secnonce_tmp, sk, session_ctx)
         assert psig == expected
-        assert partial_sig_verify_internal(psig, pubnonces[signer_index], pubkeys[signer_index], session_ctx)
+        assert partial_sig_verify(psig, pubnonces[signer_index], pubkeys[signer_index], session_ctx)
 
     for test_case in sign_error_test_cases:
         exception, except_fn = get_error_details(test_case)
+        if test_case["error"].get("contrib") == "aggnonce":
+            # The nested session identifies BIP327's sole aggregator as level 0.
+            except_fn = lambda e: e.signer == 0 and e.contrib == "aggnonce"
 
         pubkeys = [X[i] for i in test_case["key_indices"]]
         aggnonce = aggnonces[test_case["aggnonce_index"]]
@@ -208,7 +211,7 @@ def test_sign_verify_vectors() -> None:
         other_pubkeys = [pk for pk in pubkeys if pk != pubkeys[signer_index]]
         aggnonce = nonce_agg(pubnonces)
         session_ctx =  SessionContext([aggnonce], [other_pubkeys], [], [], msg)
-        assert not partial_sig_verify_internal(sig, pubnonces[signer_index], pubkeys[signer_index], session_ctx)
+        assert not partial_sig_verify(sig, pubnonces[signer_index], pubkeys[signer_index], session_ctx)
 
     for test_case in verify_error_test_cases:
         exception, except_fn = get_error_details(test_case)
@@ -222,7 +225,7 @@ def test_sign_verify_vectors() -> None:
         other_pubkeys = [pk for pk in pubkeys if pk != pubkeys[signer_index]]
         aggnonce = nonce_agg(pubnonces)
         session_ctx =  SessionContext([aggnonce], [other_pubkeys], [], [], msg)
-        assert_raises(exception, lambda: partial_sig_verify_internal(sig, pubnonces[signer_index], pubkeys[signer_index], session_ctx), except_fn)
+        assert_raises(exception, lambda: partial_sig_verify(sig, pubnonces[signer_index], pubkeys[signer_index], session_ctx), except_fn)
 
 def test_tweak_vectors() -> None:
     vector_file = VECTORS_DIR / 'tweak_vectors.json'
@@ -271,7 +274,7 @@ def test_tweak_vectors() -> None:
         # secret key.
         _, psig = sign(secnonce_tmp, sk, session_ctx)
         assert psig == expected
-        assert partial_sig_verify_internal(expected, pubnonces[signer_index], pubkeys[signer_index], session_ctx)
+        assert partial_sig_verify(expected, pubnonces[signer_index], pubkeys[signer_index], session_ctx)
 
     for test_case in error_test_cases:
         exception, except_fn = get_error_details(test_case)
